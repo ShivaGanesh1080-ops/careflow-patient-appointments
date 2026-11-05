@@ -88,13 +88,18 @@ app.put('/api/admin/doctors/:id',async(req,res)=>{const fields=doctorFields(req.
 app.delete('/api/admin/doctors/:id',async(req,res)=>{const future=await get("SELECT count(*) n FROM appointments a JOIN slots s ON s.id=a.slot_id WHERE a.doctor_id=? AND a.status='booked' AND s.start_time>?",[req.params.id,localNow()]);if(future.n)return fail(res,409,'Cancel this doctor’s upcoming appointments before deactivating the profile.');const result=await run('UPDATE doctors SET active=0 WHERE id=?',[req.params.id]);if(!result.changes)return fail(res,404,'Doctor not found.');changed('doctors',null,true);res.json({message:'Doctor deactivated. Appointment history is preserved.'});});
 function validDate(date){if(!/^\d{4}-\d{2}-\d{2}$/.test(date))return false;const d=new Date(date+'T12:00:00');return !isNaN(d)&&localDate(d)===date;}
 app.post('/api/admin/slots',async(req,res)=>{
-  const {doctorId,date,startTime,endTime,intervalMinutes=30}=req.body;
+  const {doctorId,date,startTime,endTime,intervalMinutes=30,slotCount}=req.body;
   const timeOK=x=>typeof x==='string'&&/^([01]\d|2[0-3]):[0-5]\d$/.test(x);
-  if(!validDate(date)||!timeOK(startTime)||!timeOK(endTime)||![15,20,30,45,60].includes(Number(intervalMinutes)))return fail(res,400,'Choose a valid date, time range, and interval (15, 20, 30, 45, or 60 minutes).');
+  const byCount=slotCount!==undefined;
+  if(!validDate(date)||!timeOK(startTime)||(!byCount&&!timeOK(endTime))||![15,20,30,45,60].includes(Number(intervalMinutes)))return fail(res,400,'Choose a valid date, start time, and duration (15, 20, 30, 45, or 60 minutes).');
+  if(byCount&&(typeof slotCount!=='number'||!Number.isInteger(slotCount)||slotCount<1||slotCount>96))return fail(res,400,'Number of slots must be a whole number between 1 and 96.');
+  const minutes=t=>Number(t.slice(0,2))*60+Number(t.slice(3));const start=minutes(startTime),step=Number(intervalMinutes),end=byCount?start+slotCount*step:minutes(endTime);
+  if(end>1439)return fail(res,400,'These slots would reach or cross midnight. Choose fewer slots, a shorter duration, or an earlier start.');
+  if(end<=start||end-start<step||date+'T'+startTime+':00'<=localNow())return fail(res,400,'Choose a future time range that fits at least one slot.');
   const doctor=await get('SELECT id FROM doctors WHERE id=? AND active=1',[doctorId]);if(!doctor)return fail(res,404,'Active doctor not found.');
-  const minutes=t=>Number(t.slice(0,2))*60+Number(t.slice(3));const start=minutes(startTime),end=minutes(endTime),step=Number(intervalMinutes);
-  if(end<=start||end-start<step||`${date}T${startTime}:00`<=localNow())return fail(res,400,'Choose a future time range that fits at least one slot.');
-  let created=0;for(let m=start;m+step<=end;m+=step){const fmt=n=>`${date}T${String(Math.floor(n/60)).padStart(2,'0')}:${String(n%60).padStart(2,'0')}:00`;const s=fmt(m),e=fmt(m+step);const result=await run(`INSERT OR IGNORE INTO slots(doctor_id,start_time,end_time) SELECT ?,?,? WHERE NOT EXISTS(SELECT 1 FROM slots WHERE doctor_id=? AND start_time<? AND end_time>?)`,[doctorId,s,e,doctorId,e,s]);created+=result.changes;}changed('slots',null,true);res.status(201).json({created});
+  const planned=Math.floor((end-start)/step);let created=0;
+  for(let m=start;m+step<=end;m+=step){const fmt=n=>date+'T'+String(Math.floor(n/60)).padStart(2,'0')+':'+String(n%60).padStart(2,'0')+':00';const s=fmt(m),e=fmt(m+step);const result=await run(`INSERT OR IGNORE INTO slots(doctor_id,start_time,end_time) SELECT ?,?,? WHERE NOT EXISTS(SELECT 1 FROM slots WHERE doctor_id=? AND start_time<? AND end_time>?)`,[doctorId,s,e,doctorId,e,s]);created+=result.changes;}
+  changed('slots',null,true);res.status(201).json({created,planned,skipped:planned-created,endTime:String(Math.floor(end/60)).padStart(2,'0')+':'+String(end%60).padStart(2,'0'),unusedMinutes:(end-start)%step});
 });
 app.patch('/api/admin/appointments/:id/status',async(req,res)=>{
   const {status,reason=''}=req.body;

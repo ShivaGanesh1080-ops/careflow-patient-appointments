@@ -22,6 +22,27 @@ test('Complete appointment lifecycle and authorization',async t=>{
  await t.test('other patient cannot cancel another booking',async()=>{const x=await api('/auth/login','POST',{email:'new@example.com',password:'Password123!'});assert.equal((await api('/appointments/'+booking.id+'/cancel','PATCH',{},x.body.token)).status,404);});
  await t.test('cancellation frees slot and supports rebooking',async()=>{assert.equal((await api('/appointments/'+booking.id+'/cancel','PATCH',{},patient)).status,200);assert.equal((await api('/appointments/'+booking.id+'/cancel','PATCH',{},patient)).status,409);assert.equal((await api('/appointments','POST',{slotId:slot.id},patient)).status,201);});
  await t.test('admin CRUD, availability and stats',async()=>{const r=await api('/admin/doctors','POST',{name:'Dr. Test',specialization:'Testing',qualification:'MBBS',bio:'Demo',experience:2,fee:100},admin);assert.equal(r.status,201);const id=r.body.doctor.id;let d=new Date();d.setDate(d.getDate()+20);const schedule={doctorId:id,date:localDate(d),startTime:'10:00',endTime:'11:00',intervalMinutes:30};assert.equal((await api('/admin/slots','POST',schedule,admin)).body.created,2);assert.equal((await api('/admin/slots','POST',schedule,admin)).body.created,0);assert.equal((await api('/admin/doctors/'+id,'PUT',{...r.body.doctor,fee:200},admin)).body.doctor.fee,200);assert.equal((await api('/admin/doctors/'+id,'DELETE',undefined,admin)).status,200);assert.ok((await api('/admin/stats','GET',undefined,admin)).body.stats.patients>=2);});
+ await t.test('slot count planning supports more than ten slots and validates capacity safely',async()=>{
+   const doctor=(await api('/admin/doctors','POST',{name:'Dr. Slot Planner Test',specialization:'Testing',qualification:'MBBS',bio:'Fictional test only',experience:1,fee:100},admin)).body.doctor;
+   const d=new Date();d.setDate(d.getDate()+30);const schedule={doctorId:doctor.id,date:localDate(d),startTime:'09:00',intervalMinutes:45,slotCount:12};
+   assert.equal((await api('/admin/slots','POST',schedule,patient)).status,403);
+   const created=await api('/admin/slots','POST',schedule,admin);assert.equal(created.status,201);assert.deepEqual(created.body,{created:12,planned:12,skipped:0,endTime:'18:00',unusedMinutes:0});
+   const repeat=await api('/admin/slots','POST',schedule,admin);assert.equal(repeat.body.created,0);assert.equal(repeat.body.skipped,12);
+   const slots=(await api('/doctors/'+doctor.id+'/slots?date='+schedule.date)).body.slots;assert.equal(slots.length,12);assert.ok(slots[11].end_time.endsWith('18:00:00'));
+   const booked=await api('/appointments','POST',{slotId:slots[0].id},patient);assert.equal(booked.status,201);
+   assert.equal((await api('/admin/slots','POST',{...schedule,slotCount:2},admin)).body.skipped,2);
+   assert.equal((await api('/appointments','GET',undefined,patient)).body.appointments.find(a=>a.id===booked.body.appointment.id).status,'booked');
+   assert.equal((await api('/appointments/'+booked.body.appointment.id+'/cancel','PATCH',{},patient)).status,200);
+   for(const slotCount of [0,-1,1.5,97,'12',null])assert.equal((await api('/admin/slots','POST',{...schedule,slotCount},admin)).status,400);
+   assert.equal((await api('/admin/slots','POST',{...schedule,startTime:'23:00',slotCount:2},admin)).status,400);
+   assert.equal((await api('/admin/slots','POST',{...schedule,date:'2026-02-31'},admin)).status,400);
+   assert.equal((await api('/admin/slots','POST',{...schedule,startTime:'25:00'},admin)).status,400);
+   assert.equal((await api('/admin/slots','POST',{...schedule,intervalMinutes:0},admin)).status,400);
+   d.setDate(d.getDate()+1);const range=await api('/admin/slots','POST',{doctorId:doctor.id,date:localDate(d),startTime:'09:00',endTime:'17:00',intervalMinutes:45},admin);
+   assert.equal(range.body.planned,10);assert.equal(range.body.unusedMinutes,30);assert.equal(range.body.created,10);
+   const partial=await api('/admin/slots','POST',{doctorId:doctor.id,date:localDate(d),startTime:'16:30',endTime:'18:00',intervalMinutes:45},admin);assert.equal(partial.body.created,2);assert.equal(partial.body.skipped,0);
+   const overlap=await api('/admin/slots','POST',{doctorId:doctor.id,date:localDate(d),startTime:'16:00',slotCount:2,intervalMinutes:45},admin);assert.equal(overlap.body.created,0);assert.equal(overlap.body.skipped,2);
+ });
  await t.test('cannot deactivate doctor with upcoming bookings',async()=>{assert.equal((await api('/admin/doctors/1','DELETE',undefined,admin)).status,409);});
  await t.test('clinic cancellation requires a meaningful reason',async()=>{const list=await api('/appointments','GET',undefined,patient);const a=list.body.appointments.find(x=>x.status==='booked');assert.ok(a);assert.equal((await api('/admin/appointments/'+a.id+'/status','PATCH',{status:'cancelled'},admin)).status,400);assert.equal((await api('/admin/appointments/'+a.id+'/status','PATCH',{status:'cancelled',reason:'no'},admin)).status,400);});
  await t.test('authenticated realtime registration and private durable cancellation notices',async()=>{

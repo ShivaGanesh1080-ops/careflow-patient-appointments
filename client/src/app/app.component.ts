@@ -94,6 +94,18 @@ export class AppComponent implements OnInit, OnDestroy {
   doctorEditor = signal(false); editingDoctorId: number | null = null;
   name = ''; email = ''; password = ''; phone = ''; search = ''; specialization = ''; historyFilter = 'all'; reason = '';
   bookingDate = this.localDate(); minDate = this.localDate(); slotDate = this.localDate(); slotDoctorId = ''; slotStart = '09:00'; slotEnd = '17:00'; slotInterval = 30;
+  slotMode: 'range' | 'count' = 'range'; slotCount = 10;
+  get slotPlan() {
+    const minutes=(value:string)=>/^([01]\d|2[0-3]):[0-5]\d$/.test(value || '') ? Number(value.slice(0,2))*60+Number(value.slice(3)) : NaN;
+    const start=minutes(this.slotStart), duration=Number(this.slotInterval), count=Number(this.slotCount);
+    if(!Number.isFinite(start)||![15,20,30,45,60].includes(duration))return {valid:false,count:0,end:'',unused:0,message:'Choose a valid start time and appointment duration.'};
+    if(this.slotMode==='count'&&(!Number.isInteger(count)||count<1||count>96))return {valid:false,count:0,end:'',unused:0,message:'Enter a whole number of slots between 1 and 96.'};
+    const end=this.slotMode==='count'?start+count*duration:minutes(this.slotEnd);
+    if(end>1439)return {valid:false,count:0,end:'',unused:0,message:'These slots would reach or cross midnight. Choose fewer slots, a shorter duration, or an earlier start.'};
+    if(!Number.isFinite(end)||end-start<duration)return {valid:false,count:0,end:'',unused:0,message:'The time range must fit at least one full appointment.'};
+    const planned=Math.floor((end-start)/duration), unused=(end-start)%duration, finish=String(Math.floor(end/60)).padStart(2,'0')+':'+String(end%60).padStart(2,'0');
+    return {valid:true,count:planned,end:finish,unused,message:planned+' slots × '+duration+' minutes · '+this.slotStart+'–'+finish+(unused?' · '+unused+' minutes unused':'')};
+  }
   doctorForm = this.emptyDoctor();
   today = new Date();
   private slotRequestId = 0;
@@ -177,7 +189,15 @@ export class AppComponent implements OnInit, OnDestroy {
   editDoctor(d?:Doctor) {this.clearMessages();this.editingDoctorId=d?.id ?? null;this.doctorForm=d ? {name:d.name,specialization:d.specialization,qualification:d.qualification,bio:d.bio,experience:d.experience,fee:d.fee} : this.emptyDoctor();this.doctorEditor.set(true);this.focusDialog();}
   async saveDoctor() {if(this.busy())return;if(this.doctorForm.bio.length>1000 || this.doctorForm.experience<0 || this.doctorForm.experience>70){this.error.set('Keep the biography within 1,000 characters and experience between 0 and 70 years.');return;}this.busy.set(true);this.clearMessages();try{await firstValueFrom(this.editingDoctorId ? this.api.put('/admin/doctors/'+this.editingDoctorId,this.doctorForm) : this.api.post('/admin/doctors',this.doctorForm));this.doctorEditor.set(false);this.restoreFocus();this.success.set('Doctor details saved.');await this.refresh();}catch(e){this.fail(e);}finally{this.busy.set(false);requestAnimationFrame(()=>this.tryShowCancellationNotice());} }
   async deactivate(d:Doctor) {if(this.busy() || !window.confirm('Deactivate '+d.name+'? They will no longer appear for new bookings.'))return;this.busy.set(true);this.clearMessages();try{await firstValueFrom(this.api.delete('/admin/doctors/'+d.id));this.success.set('Doctor deactivated. Existing appointments remain in the records.');await this.refresh();}catch(e){this.fail(e);}finally{this.busy.set(false);requestAnimationFrame(()=>this.tryShowCancellationNotice());} }
-  async createSlots() {if(this.busy())return;if(this.slotStart>=this.slotEnd){this.error.set('End time must be later than start time.');return;}this.busy.set(true);this.clearMessages();try{const data=await firstValueFrom(this.api.post<{created:number}>('/admin/slots',{doctorId:Number(this.slotDoctorId),date:this.slotDate,startTime:this.slotStart,endTime:this.slotEnd,intervalMinutes:Number(this.slotInterval)}));this.success.set(data.created+' appointment slots created. Patients can now book these times.');await this.refresh();}catch(e){this.fail(e);}finally{this.busy.set(false);requestAnimationFrame(()=>this.tryShowCancellationNotice());} }
+  async createSlots() {
+    if(this.busy())return;const plan=this.slotPlan;
+    if(!plan.valid){this.error.set(plan.message);return;}
+    this.busy.set(true);this.clearMessages();
+    try {
+      const data=await firstValueFrom(this.api.post<{created:number;planned:number;skipped:number}>('/admin/slots',{doctorId:Number(this.slotDoctorId),date:this.slotDate,startTime:this.slotStart,intervalMinutes:Number(this.slotInterval),...(this.slotMode==='count'?{slotCount:Number(this.slotCount)}:{endTime:this.slotEnd})}));
+      this.success.set(data.created+' of '+data.planned+' planned slots created.'+(data.skipped?' '+data.skipped+' skipped because they overlap existing slots.':' Patients can now book these times.'));await this.refresh();
+    }catch(e){this.fail(e);}finally{this.busy.set(false);requestAnimationFrame(()=>this.tryShowCancellationNotice());}
+  }
   async setStatus(a:Appointment,status:'completed'|'cancelled') {
     if(status==='cancelled'){this.openAdminCancellation(a);return;}
     if(this.busy() || !this.canComplete(a) || !window.confirm('Mark this appointment as completed?'))return;
