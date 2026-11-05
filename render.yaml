@@ -1,0 +1,35 @@
+# Free student demonstration: remote SQLite is required; no local disk is durable.
+services:
+  - type: web
+    name: careflow-patient-appointments
+    runtime: node
+    plan: free
+    region: singapore
+    buildCommand: npm ci && npm --prefix server ci --include=dev && npm --prefix client ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: 24
+      - key: HOST
+        value: 0.0.0.0
+      - key: TZ
+        value: Asia/Kolkata
+      - key: JWT_SECRET
+        generateValue: true
+      - key: TURSO_DATABASE_URL
+        sync: false
+      - key: TURSO_AUTH_TOKEN
+        sync: false
+      - key: SEED_DEMO_USERS
+        value: "false"
+      - key: BOOTSTRAP_ADMIN_EMAIL
+        sync: false
+      - key: BOOTSTRAP_ADMIN_PASSWORD
+        generateValue: true
+      - key: MAIL_PROVIDER
+        value: gmail_api
+# Optional Gmail OAuth settings and MAIL_ALLOWED_RECIPIENTS are entered as
+# backend environment secrets after authorization. Email stays unconfigured until then.

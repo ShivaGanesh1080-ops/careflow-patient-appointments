@@ -1,4 +1,10 @@
 require('dotenv').config({path:require('node:path').join(__dirname,'.env'),quiet:true});
+if(process.env.NODE_ENV==='production'&&!process.env.JWT_SECRET?.trim()) {
+  throw new Error('JWT_SECRET is required in production. Set a persistent secret in the hosting environment.');
+}
+if(process.env.RENDER==='true'&&(!process.env.TURSO_DATABASE_URL?.trim()||process.env.TURSO_DATABASE_URL.startsWith('file:'))) {
+  throw new Error('Set TURSO_DATABASE_URL and TURSO_AUTH_TOKEN on Render; local database files are not durable.');
+}
 const express = require('express');
 const helmet = require('helmet');
 const {rateLimit} = require('express-rate-limit');
@@ -7,7 +13,7 @@ const jwt = require('jsonwebtoken');
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const {run,get,all,init,localNow,localDate} = require('./db');
+const {run,get,all,init,localNow,localDate,adapter} = require('./db');
 const {Server}=require('socket.io');
 const http=require('node:http');
 const {kickMail,startMailWorker,onMailChange}=require('./mail');
@@ -18,8 +24,10 @@ onMailChange(userId=>changed('notifications',userId));
 app.use(helmet({contentSecurityPolicy:false}));
 app.use(express.json({limit:'32kb'}));
 const secretPath=path.join(__dirname,'data','.jwt-secret');
-fs.mkdirSync(path.dirname(secretPath),{recursive:true});
-if(!process.env.JWT_SECRET&&!fs.existsSync(secretPath)) fs.writeFileSync(secretPath,crypto.randomBytes(48).toString('hex'));
+if(!process.env.JWT_SECRET){
+  fs.mkdirSync(path.dirname(secretPath),{recursive:true});
+  if(!fs.existsSync(secretPath))fs.writeFileSync(secretPath,crypto.randomBytes(48).toString('hex'),{mode:0o600});
+}
 const secret=process.env.JWT_SECRET||fs.readFileSync(secretPath,'utf8');
 const fail=(res,code,error)=>res.status(code).json({error});
 const safeUser=u=>({id:u.id,name:u.name,email:u.email,phone:u.phone,role:u.role});
@@ -28,7 +36,7 @@ const auth=async(req,res,next)=>{try{const raw=req.headers.authorization||'';if(
 const admin=(req,res,next)=>req.user.role==='admin'?next():fail(res,403,'Administrator access required.');
 const patient=(req,res,next)=>req.user.role==='patient'?next():fail(res,403,'Sign in with a patient account to book an appointment.');
 const authLimit=rateLimit({windowMs:15*60*1000,limit:100,standardHeaders:'draft-8',legacyHeaders:false,message:{error:'Too many sign-in attempts. Please try again later.'}});
-app.get('/api/health',(req,res)=>res.json({status:'ok',database:'SQLite3'}));
+app.get('/api/health',(req,res)=>res.json({status:'ok',database:'SQLite3',adapter}));
 app.post('/api/auth/register',authLimit,async(req,res)=>{
   const {name,email,password,phone=''}=req.body;
   if(typeof name!=='string'||name.trim().length<2||name.length>80)return fail(res,400,'Enter a name between 2 and 80 characters.');
@@ -111,6 +119,6 @@ function createHttpServer(){
   io.on('connection',socket=>{const user=socket.data.user;socket.join('user:'+user.id);if(user.role==='admin')socket.join('admins');const timer=setTimeout(()=>socket.disconnect(true),Math.max(0,socket.data.expires*1000-Date.now()));timer.unref();socket.on('disconnect',()=>clearTimeout(timer));});
   return server;
 }
-async function start(){await init();const port=Number(process.env.PORT)||3000;const server=createHttpServer();const timer=startMailWorker();server.on('close',()=>clearInterval(timer));return server.listen(port,'127.0.0.1',()=>console.log(`CareFlow running at http://localhost:${port}`));}
+async function start(){await init();const port=process.env.PORT===undefined?3000:Number(process.env.PORT);if(!Number.isInteger(port)||port<0||port>65535)throw new Error('PORT must be an integer between 0 and 65535.');const host=process.env.HOST||(process.env.NODE_ENV==='production'?'0.0.0.0':'127.0.0.1');const server=createHttpServer();const timer=startMailWorker();server.on('close',()=>clearInterval(timer));return server.listen(port,host,()=>console.log(`CareFlow running at http://${host}:${server.address().port}`));}
 if(require.main===module)start().catch(e=>{console.error(e);process.exit(1);});
 module.exports={app,start,createHttpServer};

@@ -39,7 +39,7 @@ These are intentional, public classroom credentials. Remove demo accounts and se
 npm test
 ```
 
-On 5 November 2026, the recovered version passed 19 test entries and an Angular production build. Browser checks covered new-patient live registration, booking, required clinic cancellation reason, immediate patient popup, unread popup persistence after login, and acknowledgement persistence.
+On 5 November 2026, the recovered version passed 37 test entries (plus the nested 19-test API suite through libSQL) and an Angular production build. Browser checks covered new-patient live registration, booking, required clinic cancellation reason, immediate patient popup, unread popup persistence after login, and acknowledgement persistence.
 
 The frontend runtime audit reported no known advisories at that check. Angular development tools retained 16 moderate advisories; npm proposed a major Angular CLI upgrade, which was not forced. Audits are time-sensitive and do not prove security.
 
@@ -68,7 +68,9 @@ This repository is a local application, not a completed cloud deployment. Hostin
 
 The simplest deployment for the unchanged application is one Node service serving both the compiled Angular frontend and API, with persistent SQLite storage. Before deploying, configure public host binding, persistent secrets, HTTPS, database backups, and non-demo account provisioning.
 
-For a free demonstration, Render plus a remote database such as Turso is under assessment and is **not implemented here**. Render Free has no persistent disk, sleeps when idle, and blocks outbound SMTP ports 25, 465, and 587. It therefore needs both a database adapter and an HTTPS email integration. A sleeping process cannot guarantee continuous email retries. A separate Vercel frontend would also need API/live-connection configuration; Vercel's normal function filesystem is unsuitable for this writable local SQLite database.
+Free-demo adapters are now implemented: optional Turso/libSQL storage, a Render blueprint, first-admin bootstrap, persistent production JWT configuration, and Gmail HTTPS API transport. Local sqlite3 and SMTP remain available. An actual fresh Turso database passed connection/schema initialization. Local regression tests passed; deployed-browser verification and real Gmail authorization are still pending.
+
+See [the free deployment guide](docs/FREE-DEPLOYMENT.md) for environment settings and limitations. Render Free sleeps when idle, has no persistent disk, and blocks SMTP. Email requires server-side OAuth credentials and a recipient allowlist; no real email has been sent.
 
 References:
 - Render Free: https://render.com/docs/free
