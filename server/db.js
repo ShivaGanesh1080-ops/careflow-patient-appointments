@@ -68,6 +68,10 @@ async function init() {
   const columns=await all('PRAGMA table_info(appointments)');
   if(!columns.some(c=>c.name==='cancellation_reason'))await run("ALTER TABLE appointments ADD COLUMN cancellation_reason TEXT DEFAULT ''");
   if(!columns.some(c=>c.name==='cancelled_by'))await run("ALTER TABLE appointments ADD COLUMN cancelled_by TEXT DEFAULT ''");
+  // Additive attendance migration: existing appointments and statuses are preserved.
+  if(!columns.some(c=>c.name==='checked_in_at'))await run('ALTER TABLE appointments ADD COLUMN checked_in_at TEXT');
+  if(!columns.some(c=>c.name==='checked_in_by'))await run('ALTER TABLE appointments ADD COLUMN checked_in_by INTEGER REFERENCES users(id)');
+  if(!columns.some(c=>c.name==='completed_at'))await run('ALTER TABLE appointments ADD COLUMN completed_at TEXT');
   await run(`CREATE TABLE IF NOT EXISTS notifications(id INTEGER PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id),appointment_id INTEGER REFERENCES appointments(id),title TEXT NOT NULL,message TEXT NOT NULL,reason TEXT DEFAULT '',created_at TEXT DEFAULT CURRENT_TIMESTAMP,read_at TEXT,email_status TEXT NOT NULL DEFAULT 'pending')`);
   await run(`CREATE INDEX IF NOT EXISTS notifications_user ON notifications(user_id,id)`);
   await run(`CREATE TABLE IF NOT EXISTS email_jobs(id INTEGER PRIMARY KEY,notification_id INTEGER UNIQUE NOT NULL REFERENCES notifications(id),recipient TEXT NOT NULL,attempts INTEGER DEFAULT 0,next_attempt_at TEXT DEFAULT CURRENT_TIMESTAMP,last_error TEXT DEFAULT '',sent_at TEXT)`);

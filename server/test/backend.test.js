@@ -12,7 +12,7 @@ test('original complete API/realtime/outbox suite also passes through libSQL fil
  const result=spawnSync(process.execPath,['--test','test/api.test.js'],{cwd:root,env:envFor(dir,{TURSO_DATABASE_URL:pathToFileURL(path.join(dir,'remote-adapter.sqlite')).href}),encoding:'utf8',timeout:120000});
  assert.equal(result.status,0,result.stdout+'\n'+result.stderr);
  assert.match(result.stdout,/Complete appointment lifecycle and authorization/);
- assert.match(result.stdout,/tests 20/);
+ assert.match(result.stdout,/tests 21/);
  console.log(result.stdout);
 }));
 

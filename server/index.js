@@ -101,14 +101,29 @@ app.post('/api/admin/slots',async(req,res)=>{
   for(let m=start;m+step<=end;m+=step){const fmt=n=>date+'T'+String(Math.floor(n/60)).padStart(2,'0')+':'+String(n%60).padStart(2,'0')+':00';const s=fmt(m),e=fmt(m+step);const result=await run(`INSERT OR IGNORE INTO slots(doctor_id,start_time,end_time) SELECT ?,?,? WHERE NOT EXISTS(SELECT 1 FROM slots WHERE doctor_id=? AND start_time<? AND end_time>?)`,[doctorId,s,e,doctorId,e,s]);created+=result.changes;}
   changed('slots',null,true);res.status(201).json({created,planned,skipped:planned-created,endTime:String(Math.floor(end/60)).padStart(2,'0')+':'+String(end%60).padStart(2,'0'),unusedMinutes:(end-start)%step});
 });
+app.patch('/api/admin/appointments/:id/arrival',async(req,res)=>{
+  const {arrived}=req.body;
+  if(typeof arrived!=='boolean')return fail(res,400,'Patient arrived must be true or false.');
+  const a=await get('SELECT id,status FROM appointments WHERE id=?',[req.params.id]);
+  if(!a)return fail(res,404,'Appointment not found.');
+  if(a.status!=='booked')return fail(res,409,'Arrival can be changed only for booked appointments.');
+  const now=new Date().toISOString();
+  const result=await run(arrived?
+    "UPDATE appointments SET checked_in_at=COALESCE(checked_in_at,?),checked_in_by=COALESCE(checked_in_by,?) WHERE id=? AND status='booked'":
+    "UPDATE appointments SET checked_in_at=NULL,checked_in_by=NULL WHERE id=? AND status='booked'",
+    arrived?[now,req.user.id,a.id]:[a.id]);
+  if(!result.changes)return fail(res,409,'Appointment already changed. Refresh and try again.');
+  changed('appointments',(await get('SELECT patient_id FROM appointments WHERE id=?',[a.id])).patient_id);
+  res.json({appointment:await get(appointmentQuery+' WHERE a.id=?',[a.id])});
+});
 app.patch('/api/admin/appointments/:id/status',async(req,res)=>{
   const {status,reason=''}=req.body;
   if(!['completed','cancelled'].includes(status))return fail(res,400,'Status must be completed or cancelled.');
   if(status==='cancelled'&&(typeof reason!=='string'||reason.trim().length<5||reason.trim().length>500))return fail(res,400,'Provide a cancellation reason between 5 and 500 characters.');
   const a=await get(appointmentQuery+' WHERE a.id=?',[req.params.id]);if(!a)return fail(res,404,'Appointment not found.');
   if(a.status!=='booked')return fail(res,409,'Only booked appointments can change status.');
-  if(status==='completed'&&a.end_time>localNow())return fail(res,409,'An appointment can be completed only after its scheduled end time.');
-  const result=await run("UPDATE appointments SET status=?,cancellation_reason=?,cancelled_by=? WHERE id=? AND status='booked'",[status,status==='cancelled'?reason.trim():'',status==='cancelled'?'admin':'',a.id]);
+  if(status==='completed'&&!a.checked_in_at)return fail(res,409,'Mark the patient as arrived before completing the visit.');
+  const result=await run("UPDATE appointments SET status=?,cancellation_reason=?,cancelled_by=?,completed_at=? WHERE id=? AND status='booked' AND (?!='completed' OR checked_in_at IS NOT NULL)",[status,status==='cancelled'?reason.trim():'',status==='cancelled'?'admin':'',status==='completed'?new Date().toISOString():null,a.id,status]);
   if(!result.changes)return fail(res,409,'Appointment already changed.');
   changed('appointments',a.patient_id);if(status==='cancelled')kickMail();
   res.json({appointment:await get(appointmentQuery+' WHERE a.id=?',[a.id])});

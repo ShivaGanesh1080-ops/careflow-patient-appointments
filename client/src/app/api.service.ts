@@ -3,7 +3,7 @@ import { HttpClient, HttpInterceptorFn, HttpParams } from '@angular/common/http'
 export interface User { id: number; name: string; email: string; phone?: string; role: string; }
 export interface Doctor { id: number; name: string; specialization: string; qualification: string; bio: string; experience: number; fee: number; active: boolean | number; }
 export interface Slot { id: number; doctor_id: number; start_time: string; end_time: string; available: boolean | number; }
-export interface Appointment { id: number; doctor_id: number; patient_id: number; slot_id: number; status: string; reason: string; created_at: string; doctor_name: string; specialization: string; fee: number; start_time: string; end_time: string; patient_name?: string; patient_email?: string; cancellation_reason?: string; cancelled_by?: string; }
+export interface Appointment { id: number; doctor_id: number; patient_id: number; slot_id: number; status: string; reason: string; created_at: string; doctor_name: string; specialization: string; fee: number; start_time: string; end_time: string; patient_name?: string; patient_email?: string; cancellation_reason?: string; cancelled_by?: string; checked_in_at?: string | null; checked_in_by?: number | null; completed_at?: string | null; }
 export interface Stats { doctors: number; patients: number; upcoming: number; completed: number; }
 export const TOKEN_KEY = 'careflow_token';
 export const authInterceptor: HttpInterceptorFn = (req, next) => { const token = localStorage.getItem(TOKEN_KEY); return next(token && req.url.startsWith('/api/') ? req.clone({ setHeaders: { Authorization: 'Bearer ' + token } }) : req); };

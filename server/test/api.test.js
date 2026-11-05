@@ -43,6 +43,36 @@ test('Complete appointment lifecycle and authorization',async t=>{
    const partial=await api('/admin/slots','POST',{doctorId:doctor.id,date:localDate(d),startTime:'16:30',endTime:'18:00',intervalMinutes:45},admin);assert.equal(partial.body.created,2);assert.equal(partial.body.skipped,0);
    const overlap=await api('/admin/slots','POST',{doctorId:doctor.id,date:localDate(d),startTime:'16:00',slotCount:2,intervalMinutes:45},admin);assert.equal(overlap.body.created,0);assert.equal(overlap.body.skipped,2);
  });
+ await t.test('admin arrival checkbox persists and enables early completion without weakening permissions',async()=>{
+   const d=new Date();d.setDate(d.getDate()+40);const date=localDate(d);
+   const doctor=(await api('/admin/doctors','POST',{name:'Dr. Attendance Test',specialization:'Testing',qualification:'MBBS',bio:'Fictional attendance verification',experience:1,fee:100},admin)).body.doctor;
+   await api('/admin/slots','POST',{doctorId:doctor.id,date,startTime:'10:00',intervalMinutes:30,slotCount:2},admin);
+   const slots=(await api('/doctors/'+doctor.id+'/slots?date='+date)).body.slots;
+   const booking=(await api('/appointments','POST',{slotId:slots[0].id},patient)).body.appointment;
+   assert.equal(booking.checked_in_at,null);assert.equal(booking.completed_at,null);
+   const route='/admin/appointments/'+booking.id;
+   assert.equal((await api(route+'/arrival','PATCH',{arrived:true})).status,401);
+   assert.equal((await api(route+'/arrival','PATCH',{arrived:true},patient)).status,403);
+   assert.equal((await api(route+'/status','PATCH',{status:'completed'},patient)).status,403);
+   assert.equal((await api(route+'/arrival','PATCH',{arrived:'true'},admin)).status,400);
+   assert.equal((await api(route+'/status','PATCH',{status:'completed'},admin)).status,409);
+   const arrival=(await api(route+'/arrival','PATCH',{arrived:true},admin)).body.appointment;
+   assert.ok(arrival.checked_in_at.endsWith('Z'));assert.ok(arrival.checked_in_by);assert.equal(arrival.status,'booked');
+   assert.equal((await api(route+'/arrival','PATCH',{arrived:true},admin)).body.appointment.checked_in_at,arrival.checked_in_at);
+   assert.equal((await api('/appointments','GET',undefined,patient)).body.appointments.find(a=>a.id===booking.id).checked_in_at,arrival.checked_in_at);
+   const cleared=(await api(route+'/arrival','PATCH',{arrived:false},admin)).body.appointment;assert.equal(cleared.checked_in_at,null);assert.equal(cleared.checked_in_by,null);
+   assert.equal((await api(route+'/status','PATCH',{status:'completed'},admin)).status,409);
+   await api(route+'/arrival','PATCH',{arrived:true},admin);
+   const completed=await api(route+'/status','PATCH',{status:'completed'},admin);assert.equal(completed.status,200);assert.equal(completed.body.appointment.status,'completed');assert.ok(completed.body.appointment.completed_at.endsWith('Z'));assert.ok(completed.body.appointment.checked_in_at);
+   assert.ok(new Date(completed.body.appointment.completed_at).getTime()>=new Date(completed.body.appointment.checked_in_at).getTime());
+   assert.equal((await api(route+'/arrival','PATCH',{arrived:false},admin)).status,409);assert.equal((await api(route+'/status','PATCH',{status:'completed'},admin)).status,409);
+   const second=(await api('/appointments','POST',{slotId:slots[1].id},patient)).body.appointment;
+   await api('/appointments/'+second.id+'/cancel','PATCH',{},patient);
+   assert.equal((await api('/admin/appointments/'+second.id+'/arrival','PATCH',{arrived:true},admin)).status,409);
+   assert.equal((await api('/admin/appointments/9999999/arrival','PATCH',{arrived:true},admin)).status,404);
+   const relog=(await api('/auth/login','POST',{email:'patient@careflow.demo',password:'Patient123!'})).body.token;
+   assert.equal((await api('/appointments','GET',undefined,relog)).body.appointments.find(a=>a.id===booking.id).status,'completed');
+ });
  await t.test('cannot deactivate doctor with upcoming bookings',async()=>{assert.equal((await api('/admin/doctors/1','DELETE',undefined,admin)).status,409);});
  await t.test('clinic cancellation requires a meaningful reason',async()=>{const list=await api('/appointments','GET',undefined,patient);const a=list.body.appointments.find(x=>x.status==='booked');assert.ok(a);assert.equal((await api('/admin/appointments/'+a.id+'/status','PATCH',{status:'cancelled'},admin)).status,400);assert.equal((await api('/admin/appointments/'+a.id+'/status','PATCH',{status:'cancelled',reason:'no'},admin)).status,400);});
  await t.test('authenticated realtime registration and private durable cancellation notices',async()=>{

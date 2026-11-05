@@ -133,7 +133,7 @@ export class AppComponent implements OnInit, OnDestroy {
   localDate(date = new Date()) { return date.getFullYear() + '-' + String(date.getMonth()+1).padStart(2,'0') + '-' + String(date.getDate()).padStart(2,'0'); }
   initials(name: string) { return name.replace(/^Dr\.?\s*/i, '').split(' ').filter(Boolean).slice(0,2).map(s => s[0]).join('').toUpperCase(); }
   isUpcoming(a: Appointment) { return !['cancelled','completed'].includes(a.status) && new Date(a.start_time).getTime() > Date.now(); }
-  canComplete(a: Appointment) { return a.status === 'booked' && new Date(a.end_time).getTime() <= Date.now(); }
+  canComplete(a: Appointment) { return a.status === 'booked' && !!a.checked_in_at; }
   canAdminCancel(a: Appointment) { return a.status === 'booked'; }
   emptyDoctor() { return {name:'',specialization:'',qualification:'',bio:'',experience:0,fee:0}; }
   clearMessages() { this.error.set(''); this.success.set(''); }
@@ -198,9 +198,20 @@ export class AppComponent implements OnInit, OnDestroy {
       this.success.set(data.created+' of '+data.planned+' planned slots created.'+(data.skipped?' '+data.skipped+' skipped because they overlap existing slots.':' Patients can now book these times.'));await this.refresh();
     }catch(e){this.fail(e);}finally{this.busy.set(false);requestAnimationFrame(()=>this.tryShowCancellationNotice());}
   }
+  async setArrived(a:Appointment,event:Event) {
+    const input=event.target as HTMLInputElement, arrived=input.checked;
+    input.checked=!!a.checked_in_at;
+    if(this.busy() || !this.isAdmin || a.status!=='booked')return;
+    if(!arrived&&!window.confirm('Clear this arrival check-in? Use Complete visit instead if the patient has finished.'))return;
+    this.busy.set(true);this.clearMessages();
+    try {
+      await firstValueFrom(this.api.patch('/admin/appointments/'+a.id+'/arrival',{arrived}));
+      this.success.set(arrived?'Patient marked as arrived. When the visit finishes, choose Complete visit.':'Arrival check-in cleared.');await this.refresh();
+    }catch(e){this.fail(e);}finally{this.busy.set(false);}
+  }
   async setStatus(a:Appointment,status:'completed'|'cancelled') {
     if(status==='cancelled'){this.openAdminCancellation(a);return;}
-    if(this.busy() || !this.canComplete(a) || !window.confirm('Mark this appointment as completed?'))return;
-    this.busy.set(true);this.clearMessages();try{await firstValueFrom(this.api.patch('/admin/appointments/'+a.id+'/status',{status:'completed'}));this.success.set('Appointment marked completed.');await this.refresh();}catch(e){this.fail(e);}finally{this.busy.set(false);this.tryShowCancellationNotice();}
+    if(this.busy() || !this.canComplete(a) || !window.confirm('Has the patient finished the visit and left? Mark this visit as completed?'))return;
+    this.busy.set(true);this.clearMessages();try{await firstValueFrom(this.api.patch('/admin/appointments/'+a.id+'/status',{status:'completed'}));this.success.set('Visit completed. Arrival and completion times are saved.');await this.refresh();}catch(e){this.fail(e);}finally{this.busy.set(false);this.tryShowCancellationNotice();}
   }
 }
