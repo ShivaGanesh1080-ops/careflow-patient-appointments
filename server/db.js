@@ -72,6 +72,25 @@ async function init() {
   if(!columns.some(c=>c.name==='checked_in_at'))await run('ALTER TABLE appointments ADD COLUMN checked_in_at TEXT');
   if(!columns.some(c=>c.name==='checked_in_by'))await run('ALTER TABLE appointments ADD COLUMN checked_in_by INTEGER REFERENCES users(id)');
   if(!columns.some(c=>c.name==='completed_at'))await run('ALTER TABLE appointments ADD COLUMN completed_at TEXT');
+  // Legacy fees are estimates only: migrating or completing a visit never records money.
+  if(!columns.some(c=>c.name==='fee_paise'))await run("ALTER TABLE appointments ADD COLUMN fee_paise INTEGER CHECK(fee_paise IS NULL OR (typeof(fee_paise)='integer' AND fee_paise BETWEEN 0 AND 10000000))");
+  if(!columns.some(c=>c.name==='fee_basis'))await run("ALTER TABLE appointments ADD COLUMN fee_basis TEXT CHECK(fee_basis IN ('booking_snapshot','legacy_estimate','admin_set'))");
+  await run("UPDATE appointments SET fee_paise=CAST(ROUND((SELECT fee FROM doctors WHERE id=appointments.doctor_id)*100) AS INTEGER),fee_basis='legacy_estimate' WHERE fee_paise IS NULL");
+  await run(`CREATE TABLE IF NOT EXISTS payment_entries (
+    id INTEGER PRIMARY KEY, appointment_id INTEGER NOT NULL REFERENCES appointments(id),
+    kind TEXT NOT NULL CHECK(kind IN ('payment','refund')),
+    amount_paise INTEGER NOT NULL CHECK(typeof(amount_paise)='integer' AND amount_paise BETWEEN 1 AND 10000000),
+    method TEXT NOT NULL CHECK(method IN ('cash','upi','card','bank')),
+    reference TEXT NOT NULL DEFAULT '' CHECK(length(reference)<=120), notes TEXT NOT NULL DEFAULT '' CHECK(length(notes)<=500),
+    original_payment_id INTEGER REFERENCES payment_entries(id), recorded_by INTEGER NOT NULL REFERENCES users(id),
+    recorded_at TEXT NOT NULL, idempotency_key TEXT UNIQUE NOT NULL,
+    CHECK((kind='payment' AND original_payment_id IS NULL) OR (kind='refund' AND original_payment_id IS NOT NULL AND length(trim(notes))>=5))
+  )`);
+  await run('CREATE INDEX IF NOT EXISTS payment_appointment ON payment_entries(appointment_id,id)');
+  await run('CREATE INDEX IF NOT EXISTS payment_original ON payment_entries(original_payment_id)');
+  await run('CREATE INDEX IF NOT EXISTS payment_recorded ON payment_entries(recorded_at)');
+  await run("CREATE TRIGGER IF NOT EXISTS payment_no_update BEFORE UPDATE ON payment_entries BEGIN SELECT RAISE(ABORT,'Payment records are append-only'); END");
+  await run("CREATE TRIGGER IF NOT EXISTS payment_no_delete BEFORE DELETE ON payment_entries BEGIN SELECT RAISE(ABORT,'Payment records are append-only'); END");
   await run(`CREATE TABLE IF NOT EXISTS notifications(id INTEGER PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id),appointment_id INTEGER REFERENCES appointments(id),title TEXT NOT NULL,message TEXT NOT NULL,reason TEXT DEFAULT '',created_at TEXT DEFAULT CURRENT_TIMESTAMP,read_at TEXT,email_status TEXT NOT NULL DEFAULT 'pending')`);
   await run(`CREATE INDEX IF NOT EXISTS notifications_user ON notifications(user_id,id)`);
   await run(`CREATE TABLE IF NOT EXISTS email_jobs(id INTEGER PRIMARY KEY,notification_id INTEGER UNIQUE NOT NULL REFERENCES notifications(id),recipient TEXT NOT NULL,attempts INTEGER DEFAULT 0,next_attempt_at TEXT DEFAULT CURRENT_TIMESTAMP,last_error TEXT DEFAULT '',sent_at TEXT)`);

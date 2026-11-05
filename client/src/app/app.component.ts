@@ -3,7 +3,7 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpErrorResponse } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
-import { ApiService, Appointment, CareNotification, Doctor, Patient, Slot, Stats, TOKEN_KEY, User } from './api.service';
+import { ApiService, Appointment, CareNotification, Doctor, Patient, Slot, Stats, TOKEN_KEY, User, PaymentDetails, PaymentEntry, RevenueReport } from './api.service';
 
 import { LiveUpdatesService } from './live-updates.service';
 
@@ -29,7 +29,7 @@ export class AppComponent implements OnInit, OnDestroy {
   get unreadCount() { return this.notifications().filter(n => !n.read_at).length; }
   get cancellationReasonValid() { const length=this.cancellationReason.trim().length; return length>=5 && length<=500; }
   get filteredPatients() { const q=this.patientSearch.trim().toLowerCase(); return this.patients().filter(p => !q || (p.name+' '+p.email+' '+(p.phone || '')).toLowerCase().includes(q)); }
-  get modalOpen() { return !!this.selectedDoctor() || this.doctorEditor() || !!this.cancellationTarget() || !!this.cancellationNotice(); }
+  get modalOpen() { return !!this.selectedDoctor() || this.doctorEditor() || !!this.cancellationTarget() || !!this.cancellationNotice() || !!this.paymentTarget(); }
   emailStatusLabel(status: string | null | undefined) { return ({not_configured:'Not configured',pending:'Pending',sent:'Sent — SMTP accepted',failed:'Failed'} as Record<string,string>)[status || 'not_configured'] || 'Unknown'; }
   connectLive() {
     if(!this.user() || !localStorage.getItem(TOKEN_KEY))return;
@@ -114,7 +114,7 @@ export class AppComponent implements OnInit, OnDestroy {
   restoreFocus() { const target=this.priorFocus;requestAnimationFrame(() => {if(target?.isConnected)target.focus();else document.querySelector<HTMLElement>('#main-content')?.focus();}); }
   closeDoctorEditor() { if (!this.busy()) { this.doctorEditor.set(false); this.restoreFocus(); requestAnimationFrame(()=>this.tryShowCancellationNotice()); } }
   dialogKeydown(event: KeyboardEvent) {
-    if (event.key === 'Escape') { event.preventDefault(); if (this.selectedDoctor()) this.closeBooking(); else if(this.doctorEditor()) this.closeDoctorEditor(); else if(this.cancellationTarget()) this.closeAdminCancellation(); else if(this.cancellationNotice()) this.closeCancellationNotice(); return; }
+    if (event.key === 'Escape') { event.preventDefault(); if (this.selectedDoctor()) this.closeBooking(); else if(this.doctorEditor()) this.closeDoctorEditor(); else if(this.cancellationTarget()) this.closeAdminCancellation(); else if(this.cancellationNotice()) this.closeCancellationNotice(); else if(this.paymentTarget()) this.closePayments(); return; }
     if (event.key !== 'Tab') return;
     const dialog = event.currentTarget as HTMLElement;
     const controls = Array.from(dialog.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex="0"]')).filter(el => el.getClientRects().length > 0);
@@ -129,7 +129,7 @@ export class AppComponent implements OnInit, OnDestroy {
   get filteredAppointments() { return this.appointments().filter(a => this.historyFilter === 'all' || (this.historyFilter === 'upcoming' ? this.isUpcoming(a) : a.status === this.historyFilter)).sort((a,b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime()); }
   get completedCount() { return this.appointments().filter(a => a.status === 'completed').length; }
   get firstName() { return this.user()?.name.split(' ')[0] || 'there'; }
-  get pageTitle() { return ({dashboard:'Your health, at a glance',doctors:'Find your care team',appointments:'Your appointments',profile:'Your personal space',manage:'Doctor management',slots:'Availability planner',patients:'People in your care',notifications:'Your care updates'} as Record<string,string>)[this.page()] || 'Careflow'; }
+  get pageTitle() { return ({dashboard:'Your health, at a glance',doctors:'Find your care team',appointments:'Your appointments',profile:'Your personal space',manage:'Doctor management',slots:'Availability planner',patients:'People in your care',notifications:'Your care updates',revenue:'Revenue & insights'} as Record<string,string>)[this.page()] || 'Careflow'; }
   localDate(date = new Date()) { return date.getFullYear() + '-' + String(date.getMonth()+1).padStart(2,'0') + '-' + String(date.getDate()).padStart(2,'0'); }
   initials(name: string) { return name.replace(/^Dr\.?\s*/i, '').split(' ').filter(Boolean).slice(0,2).map(s => s[0]).join('').toUpperCase(); }
   isUpcoming(a: Appointment) { return !['cancelled','completed'].includes(a.status) && new Date(a.start_time).getTime() > Date.now(); }
@@ -158,9 +158,9 @@ export class AppComponent implements OnInit, OnDestroy {
   logout() {
     this.sessionEpoch++;this.refreshRequestId++;this.slotRequestId++;
     this.live.disconnect();if(this.liveRefreshTimer)clearTimeout(this.liveRefreshTimer);this.liveRefreshTimer=null;
-    localStorage.removeItem(TOKEN_KEY);this.user.set(null);this.doctors.set([]);this.appointments.set([]);this.patients.set([]);this.notifications.set([]);this.selectedDoctor.set(null);this.doctorEditor.set(false);this.cancellationTarget.set(null);this.cancellationNotice.set(null);this.cancellationPromptEligible=false;this.promptedNotifications.clear();this.notificationBusy.set(false);this.notificationError.set('');this.patientSearch='';this.page.set('dashboard');this.loading.set(false);this.clearMessages();
+    localStorage.removeItem(TOKEN_KEY);this.user.set(null);this.doctors.set([]);this.appointments.set([]);this.patients.set([]);this.notifications.set([]);this.selectedDoctor.set(null);this.doctorEditor.set(false);this.cancellationTarget.set(null);this.cancellationNotice.set(null);this.cancellationPromptEligible=false;this.promptedNotifications.clear();this.notificationBusy.set(false);this.notificationError.set('');this.patientSearch='';this.revenueRequestId++;this.paymentRequestId++;this.revenue.set(null);this.paymentDetails.set(null);this.paymentTarget.set(null);this.page.set('dashboard');this.loading.set(false);this.clearMessages();
   }
-  navigate(page:string) {this.page.set(page);this.clearMessages();}
+  navigate(page:string) {this.page.set(page);this.clearMessages();if(page==='revenue'&&this.isAdmin)void this.loadRevenue();}
   async refresh(quiet=false) {
     if(!this.user())return;
     const epoch=this.sessionEpoch, requestId=++this.refreshRequestId, admin=this.isAdmin;
@@ -177,6 +177,8 @@ export class AppComponent implements OnInit, OnDestroy {
       if(epoch!==this.sessionEpoch || requestId!==this.refreshRequestId)return;
       this.doctors.set(d.doctors);this.appointments.set(a.appointments);this.specializations.set(s.specializations);this.notifications.set(n.notifications.slice().sort((x,y)=>new Date(y.created_at).getTime()-new Date(x.created_at).getTime() || y.id-x.id));
       if(patients)this.patients.set(patients.patients);if(stats)this.stats.set(stats.stats);
+      if(admin&&this.page()==='revenue')void this.loadRevenue();
+      if(admin&&this.paymentTarget())void this.loadPaymentDetails(this.paymentTarget()!.id);
     } catch(e) {if(epoch===this.sessionEpoch && requestId===this.refreshRequestId)this.fail(e);}
     finally {if(epoch===this.sessionEpoch && requestId===this.refreshRequestId){this.loading.set(false);this.tryShowCancellationNotice();}}
   }
@@ -197,6 +199,61 @@ export class AppComponent implements OnInit, OnDestroy {
       const data=await firstValueFrom(this.api.post<{created:number;planned:number;skipped:number}>('/admin/slots',{doctorId:Number(this.slotDoctorId),date:this.slotDate,startTime:this.slotStart,intervalMinutes:Number(this.slotInterval),...(this.slotMode==='count'?{slotCount:Number(this.slotCount)}:{endTime:this.slotEnd})}));
       this.success.set(data.created+' of '+data.planned+' planned slots created.'+(data.skipped?' '+data.skipped+' skipped because they overlap existing slots.':' Patients can now book these times.'));await this.refresh();
     }catch(e){this.fail(e);}finally{this.busy.set(false);requestAnimationFrame(()=>this.tryShowCancellationNotice());}
+  }
+  revenue = signal<RevenueReport|null>(null); revenueLoading = signal(false); revenueError = signal('');
+  revenueFrom = this.financeDate(-29); revenueTo = this.financeDate();
+  private revenueRequestId = 0; private paymentRequestId = 0;
+  paymentTarget = signal<Appointment|null>(null); paymentDetails = signal<PaymentDetails|null>(null); paymentLoading = signal(false); paymentError = signal('');
+  paymentKind:'payment'|'refund'='payment'; paymentAmount=''; paymentMethod='cash'; paymentReference=''; paymentNotes=''; refundPaymentId:number|null=null; paymentConfirmed=false; feeInput='';
+  private paymentIntent:{signature:string;key:string}|null=null;
+  financeDate(offset=0) { const today=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Kolkata',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());const d=new Date(today+'T12:00:00Z');d.setUTCDate(d.getUTCDate()+offset);return d.toISOString().slice(0,10); }
+  money(paise:number|undefined) { return new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',minimumFractionDigits:2,maximumFractionDigits:2}).format((paise||0)/100); }
+  paise(value:string) { if(!/^\d{1,6}(?:\.\d{1,2})?$/.test(String(value).trim()))return null;const [r,f='']=String(value).trim().split('.');const n=Number(r)*100+Number(f.padEnd(2,'0'));return Number.isSafeInteger(n)&&n<=10000000?n:null; }
+  get paymentBalance() { const a=this.paymentDetails()?.appointment;return Math.max(0,(a?.fee_paise||0)-(a?.paid_paise||0)); }
+  get refundOptions() { return (this.paymentDetails()?.entries||[]).filter(e=>e.kind==='payment'&&e.refundable_paise>0); }
+  get paymentLimit() { return this.paymentKind==='refund'?(this.refundOptions.find(e=>e.id===Number(this.refundPaymentId))?.refundable_paise||0):this.paymentBalance; }
+  get paymentFormValid() { const n=this.paise(this.paymentAmount);return n!==null&&n>0&&n<=this.paymentLimit&&this.paymentConfirmed&&(this.paymentKind!=='refund'||(!!this.refundPaymentId&&this.paymentNotes.trim().length>=5))&&(this.paymentKind!=='payment'||this.paymentDetails()?.appointment.status!=='cancelled'); }
+  async loadRevenue() {
+    if(!this.isAdmin)return;const epoch=this.sessionEpoch,id=++this.revenueRequestId;const from=this.revenueFrom,to=this.revenueTo;
+    if(!from||!to||from>to){this.revenueLoading.set(false);this.revenueError.set('Choose a valid start and end date.');this.revenue.set(null);return;}
+    this.revenueLoading.set(true);this.revenueError.set('');
+    try { const data=await firstValueFrom(this.api.get<RevenueReport>('/admin/revenue',{from,to}));if(epoch===this.sessionEpoch&&id===this.revenueRequestId)this.revenue.set(data); }
+    catch(e){if(epoch===this.sessionEpoch&&id===this.revenueRequestId){this.revenueError.set(this.errorText(e));this.revenue.set(null);}}
+    finally{if(epoch===this.sessionEpoch&&id===this.revenueRequestId)this.revenueLoading.set(false);}
+  }
+  revenueRange(days:number) { this.revenueFrom=this.financeDate(1-days);this.revenueTo=this.financeDate();void this.loadRevenue(); }
+  get revenuePlot() {
+    const rows=this.revenue()?.daily||[], values=rows.map(d=>d.net_paise), min=Math.min(0,...values),max=Math.max(0,...values),span=max-min||1;
+    const x=(i:number)=>40+(rows.length>1?i/(rows.length-1)*640:320),y=(n:number)=>190-(n-min)/span*150;
+    return {points:rows.map((d,i)=>x(i).toFixed(1)+','+y(d.net_paise).toFixed(1)).join(' '),zero:y(0),top:this.money(max),bottom:this.money(min),first:rows[0]?.date||'',last:rows[rows.length-1]?.date||''};
+  }
+  get statusRows() { const counts=this.revenue()?.appointment_status||[];return ['booked','completed','cancelled'].map(status=>({status,count:counts.find(s=>s.status===status)?.count||0})); }
+  get statusTotal() { return this.statusRows.reduce((n,s)=>n+s.count,0); }
+  get statusGradient() { const rows=this.statusRows,total=this.statusTotal;if(!total)return '#edf1ea';const a=rows[0].count/total*100,b=a+rows[1].count/total*100;return 'conic-gradient(#24675f 0% '+a+'%,#899cc5 '+a+'% '+b+'%,#cc8a76 '+b+'% 100%)'; }
+  doctorBar(value:number) { const max=Math.max(1,...(this.revenue()?.by_doctor||[]).map(d=>Math.abs(d.net_paise)));return Math.abs(value)/max*100; }
+  async openPayments(a:Appointment) {if(!this.isAdmin||this.busy()||this.modalOpen)return;this.paymentTarget.set(a);this.paymentDetails.set(null);this.paymentKind='payment';this.paymentAmount='';this.paymentReference='';this.paymentNotes='';this.paymentConfirmed=false;this.refundPaymentId=null;this.paymentIntent=null;this.paymentError.set('');this.focusDialog();await this.loadPaymentDetails(a.id,true);}
+  async openPaymentById(id:number) { const a=this.appointments().find(a=>a.id===id);if(a)await this.openPayments(a); }
+  closePayments() {if(this.busy())return;this.paymentRequestId++;this.paymentTarget.set(null);this.paymentDetails.set(null);this.paymentError.set('');this.restoreFocus();}
+  async loadPaymentDetails(id:number,initial=false) {
+    const epoch=this.sessionEpoch,request=++this.paymentRequestId;if(initial)this.paymentLoading.set(true);
+    try {const data=await firstValueFrom(this.api.get<PaymentDetails>('/admin/appointments/'+id+'/payments'));if(epoch===this.sessionEpoch&&request===this.paymentRequestId&&this.paymentTarget()?.id===id){this.paymentDetails.set(data);this.paymentTarget.set(data.appointment);if(initial)this.feeInput=((data.appointment.fee_paise||0)/100).toFixed(2);}}
+    catch(e){if(epoch===this.sessionEpoch&&request===this.paymentRequestId)this.paymentError.set(this.errorText(e));}
+    finally{if(epoch===this.sessionEpoch&&request===this.paymentRequestId)this.paymentLoading.set(false);}
+  }
+  resetPaymentConfirmation() {this.paymentConfirmed=false;this.paymentError.set('');}
+  async saveAppointmentFee() {
+    const a=this.paymentTarget(),amount=this.paise(this.feeInput);if(!a||this.busy()||amount===null||this.paymentDetails()?.entries.length)return;
+    this.busy.set(true);this.paymentError.set('');
+    try {const d=await firstValueFrom(this.api.patch<PaymentDetails>('/admin/appointments/'+a.id+'/fee',{fee_paise:amount}));this.paymentDetails.set(d);this.paymentTarget.set(d.appointment);await this.refresh(true);}
+    catch(e){this.paymentError.set(this.errorText(e));}finally{this.busy.set(false);}
+  }
+  async recordPayment() {
+    const a=this.paymentTarget();if(!a||this.busy()||!this.paymentFormValid)return;
+    const body={kind:this.paymentKind,amount_paise:this.paise(this.paymentAmount)!,method:this.paymentKind==='refund'?(this.refundOptions.find(e=>e.id===Number(this.refundPaymentId))?.method||''):this.paymentMethod,reference:this.paymentReference.trim(),notes:this.paymentNotes.trim(),...(this.paymentKind==='refund'?{original_payment_id:Number(this.refundPaymentId)}:{})};
+    const signature=JSON.stringify(body);if(this.paymentIntent?.signature!==signature)this.paymentIntent={signature,key:crypto.randomUUID()};
+    this.busy.set(true);this.paymentError.set('');
+    try {const d=await firstValueFrom(this.api.post<PaymentDetails>('/admin/appointments/'+a.id+'/payments',{...body,idempotency_key:this.paymentIntent!.key}));this.paymentDetails.set(d);this.paymentTarget.set(d.appointment);this.paymentAmount='';this.paymentReference='';this.paymentNotes='';this.paymentConfirmed=false;this.paymentIntent=null;this.success.set('Ledger entry saved. No money was moved by CareFlow.');await this.refresh(true);}
+    catch(e){this.paymentError.set(this.errorText(e));}finally{this.busy.set(false);}
   }
   async setArrived(a:Appointment,event:Event) {
     const input=event.target as HTMLInputElement, arrived=input.checked;
