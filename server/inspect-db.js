@@ -1,6 +1,31 @@
 // Read-only table viewer: deliberately excludes password hashes and signing secrets.
-require('dotenv').config({path:require('node:path').join(__dirname,'.env'),quiet:true});
-const {all,db}=require('./db');
-const columns={users:'id,name,email,phone,role,created_at',doctors:'id,name,specialization,qualification,experience,fee,active',slots:'id,doctor_id,start_time,end_time',appointments:'id,patient_id,doctor_id,slot_id,status,reason,cancellation_reason,cancelled_by,created_at',notifications:'id,user_id,appointment_id,title,reason,created_at,read_at,email_status',email_jobs:'id,notification_id,recipient,attempts,next_attempt_at,last_error,sent_at'};
-async function main(){const table=process.argv[2]||'users';if(!Object.hasOwn(columns,table))throw Error('Choose one of: '+Object.keys(columns).join(', '));const exists=await all("SELECT name FROM sqlite_master WHERE type='table' AND name=?",[table]);if(!exists.length)throw Error('Table missing. Start the app once to initialize/migrate the database.');const rows=await all('SELECT '+columns[table]+' FROM '+table+' ORDER BY id DESC LIMIT 50');console.table(rows);console.log('Showing latest '+rows.length+' rows. No data was changed.');}
-main().catch(e=>{console.error(e.message);process.exitCode=1;}).finally(()=>db.close());
+require('dotenv').config({ path: require('node:path').join(__dirname, '.env'), quiet: true });
+const { all, db } = require('./db');
+const columns = {
+  users: 'id,name,email,phone,role,created_at',
+  doctors: 'id,name,specialization,qualification,experience,fee,active',
+  slots: 'id,doctor_id,start_time,end_time',
+  appointments:
+    'id,patient_id,doctor_id,slot_id,status,reason,cancellation_reason,cancelled_by,created_at',
+  notifications: 'id,user_id,appointment_id,title,reason,created_at,read_at,email_status',
+  email_jobs: 'id,notification_id,recipient,attempts,next_attempt_at,last_error,sent_at',
+};
+async function main() {
+  const table = process.argv[2] || 'users';
+  if (!Object.hasOwn(columns, table))
+    throw Error('Choose one of: ' + Object.keys(columns).join(', '));
+  const exists = await all("SELECT name FROM sqlite_master WHERE type='table' AND name=?", [table]);
+  if (!exists.length)
+    throw Error('Table missing. Start the app once to initialize/migrate the database.');
+  const rows = await all(
+    'SELECT ' + columns[table] + ' FROM ' + table + ' ORDER BY id DESC LIMIT 50',
+  );
+  console.table(rows);
+  console.log('Showing latest ' + rows.length + ' rows. No data was changed.');
+}
+main()
+  .catch((e) => {
+    console.error(e.message);
+    process.exitCode = 1;
+  })
+  .finally(() => db.close());
