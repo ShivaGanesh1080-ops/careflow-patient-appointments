@@ -7,9 +7,16 @@
     "dev": "concurrently -k \"npm --prefix server run dev\" \"npm --prefix client start\"",
     "build": "npm --prefix client run build",
     "start": "npm --prefix server start",
-    "test": "npm --prefix server test"
+    "test": "npm --prefix server test",
+    "format": "prettier --write \"server/*.js\" \"server/test/*.js\" \"client/src/**/*.{ts,html,css}\" \"test/*.js\" \"e2e/*.js\" \"playwright.config.js\"",
+    "format:check": "prettier --check \"server/*.js\" \"server/test/*.js\" \"client/src/**/*.{ts,html,css}\" \"test/*.js\" \"e2e/*.js\" \"playwright.config.js\"",
+    "test:timezone": "node --test test/timezone.test.js",
+    "test:frontend": "node test/frontend-contract.js",
+    "test:e2e": "playwright test"
   },
   "devDependencies": {
-    "concurrently": "^9.2.1"
+    "@playwright/test": "^1.65.0",
+    "concurrently": "^9.2.1",
+    "prettier": "3.6.2"
   }
 }
